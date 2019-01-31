@@ -74,10 +74,30 @@ class SelectorBIC(ModelSelector):
 
         :return: GaussianHMM object
         """
+        #from office-hours:
+        # d = features 
+        # n = HMM states
+        # free parameters = n**2 + 2*d*n-1
+
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        bestModel = None
+        bestBIC = float("inf")
+        best_num_components = self.min_n_components
+
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                hmm_model = self.base_model(n)
+                logL = hmm_model.score(self.X, self.lengths)
+                free_params = n**2 + 2 * self.X.shape[1] * n - 1
+                BIC = -2 * logL + free_params * np.log(sum(self.lengths))
+                if BIC < bestBIC:
+                    bestModel = hmm_model
+                    bestBIC = BIC
+            except:
+                pass
+
+        return bestModel
 
 
 class SelectorDIC(ModelSelector):
@@ -93,8 +113,29 @@ class SelectorDIC(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        bestModel = None
+        bestDIC = float("-inf")
+
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                hmm_model = self.base_model(n)
+                this_word_logL = hmm_model.score(self.X, self.lengths)
+
+                sum_all_other_logL = 0
+                for all_other_word in self.words:
+                    if all_other_word != self.this_word:
+                        wordX, wordLengths = self.hwords[all_other_word]
+                        sum_all_other_logL += hmm_model.score(wordX, wordLengths)
+                    
+                DIC = this_word_logL - (sum_all_other_logL / (len(self.words) - 1))
+                if DIC > bestDIC:
+                    bestDIC = DIC
+                    bestModel = hmm_model
+            
+            except:
+                pass
+
+        return bestModel
 
 
 class SelectorCV(ModelSelector):
@@ -104,6 +145,53 @@ class SelectorCV(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        max_logL = float("-inf")
+        n_splits = min(len(self.lengths), 3)
+        best_num_components = self.min_n_components
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+
+        #print("N OF FOLDS>", n_splits)
+
+        for n in range(self.min_n_components, self.max_n_components + 1):
+
+          
+            try:
+                total_logL = 0
+
+                if n_splits > 1:
+                    split_method = KFold(n_splits)
+                    for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+
+                        # Create train and test data
+                        X_train , X_lenghts_train = asarray(combine_sequences(cv_train_idx, self.sequences))
+                        X_test  , X_lenghts_test  = asarray(combine_sequences(cv_test_idx, self.sequences))
+
+                        #Train HMM
+                        hmm_model = GaussianHMM(n_components=n, covariance_type="diag", n_iter=1000,
+                                        random_state=self.random_state, verbose=False).fit(X_train, X_lenghts_train)
+
+                        #Get LogL on the test data
+                        logL_test = hmm_model.score(X_test, X_lenghts_test)
+                        total_logL += logL_test
+
+                    total_logL = total_logL / n_splits
+
+                #pass kfolds
+                else:
+                    hmm_model = self.base_model(n)
+                    total_logL = hmm_model.score(self.X, self.lengths)
+
+                if total_logL > max_logL:
+                        max_logL = total_logL
+                        best_num_components = n 
+
+            except: 
+                pass
+
+
+        return GaussianHMM(n_components=best_num_components, covariance_type="diag", n_iter=1000,
+                                    random_state=self.random_state, verbose=False).fit(self.X, self.lengths)
+
+
+        
+
